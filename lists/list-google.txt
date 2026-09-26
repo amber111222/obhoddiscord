@@ -1,2 +1,0 @@
-# YouTube bypass disabled
-domain.example.invalid
