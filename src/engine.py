@@ -29,6 +29,7 @@ class ZapretEngine:
         self.current_preset = None
         self.start_time = None
         self.log_callbacks = []
+        self.current_process = None
 
         # Auto-setup necessary environment
         self._ensure_environment()
@@ -188,7 +189,16 @@ class ZapretEngine:
         self._emit_log("Остановка службы обхода...")
 
         if IS_WINDOWS:
-            # Kill winws process
+            # Terminate our tracked process if active
+            if self.current_process:
+                try:
+                    self.current_process.terminate()
+                    self.current_process.wait(timeout=0.5)
+                except Exception:
+                    pass
+                self.current_process = None
+
+            # Ensure all winws instances are killed
             try:
                 subprocess.run(
                     ["taskkill", "/F", "/IM", "winws.exe"],
@@ -198,21 +208,8 @@ class ZapretEngine:
             except Exception:
                 pass
 
-            # Stop and delete WinDivert service instances
-            for srv in ["WinDivert", "WinDivert14"]:
-                try:
-                    subprocess.run(
-                        ["net", "stop", srv],
-                        capture_output=True,
-                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                    )
-                    subprocess.run(
-                        ["sc", "delete", srv],
-                        capture_output=True,
-                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                    )
-                except Exception:
-                    pass
+            # Pause briefly to allow kernel driver to release filter hooks
+            time.sleep(0.3)
         elif IS_MACOS or IS_LINUX:
             try:
                 subprocess.run(["pkill", "-f", "nfqws|tpws"], capture_output=True)
@@ -225,7 +222,7 @@ class ZapretEngine:
         self._emit_log("Обход остановлен.")
 
     def start(self, preset_name, raw_template=None, game_mode=False, game_tcp="12", game_udp="12"):
-        """Starts winws using the actual zapret .bat file or direct binary execution."""
+        """Starts winws directly using parsed raw_template arguments."""
         # Stop existing instance if running
         if self.is_running():
             self.stop()
@@ -234,53 +231,64 @@ class ZapretEngine:
         self._ensure_environment()
 
         if IS_WINDOWS:
-            # Check if corresponding .bat file exists in zapret folder
-            bat_candidate = os.path.join(self.zapret_dir, f"{preset_name}.bat")
-            if not os.path.exists(bat_candidate):
-                bat_candidate = os.path.join(self.zapret_dir, preset_name) if preset_name.endswith(".bat") else f"{preset_name}.bat"
-
-            self._emit_log(f"Запуск обхода Discord: {preset_name}")
-
-            if os.path.exists(bat_candidate):
-                # Launch via the authentic .bat file
-                self._emit_log(f"Запуск через скрипт: {os.path.basename(bat_candidate)}")
-                subprocess.Popen(
-                    f'cmd.exe /c "call \"{os.path.abspath(bat_candidate)}\""',
-                    cwd=self.zapret_dir,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                    shell=False
-                )
-            else:
-                # Fallback to direct winws.exe launch
+            if not os.path.exists(self.winws_path):
+                # Search for winws.exe in zapret candidates
+                self.zapret_dir = self._find_zapret_dir()
+                self.bin_dir = os.path.join(self.zapret_dir, "bin")
+                self.lists_dir = os.path.join(self.zapret_dir, "lists")
+                self.winws_path = os.path.join(self.bin_dir, "winws.exe")
                 if not os.path.exists(self.winws_path):
                     raise FileNotFoundError(f"winws.exe не найден: {self.winws_path}")
 
-                if not raw_template:
+            if not raw_template:
+                try:
                     from presets import get_preset
                     p_info = get_preset(preset_name)
                     if p_info:
-                        raw_template = p_info["raw_template"]
-                    else:
-                        raise ValueError(f"Шаблон для пресета {preset_name} не найден.")
+                        raw_template = p_info.get("raw_template")
+                except Exception:
+                    pass
 
-                bin_slash = os.path.abspath(self.bin_dir) + "\\"
-                lists_slash = os.path.abspath(self.lists_dir) + "\\"
+            if not raw_template:
+                # Direct JSON fallback
+                try:
+                    import json
+                    for p_dir in [self.base_dir, os.path.dirname(self.base_dir), os.path.join(self.base_dir, "src")]:
+                        p_file = os.path.join(p_dir, "presets_data.json")
+                        if os.path.exists(p_file):
+                            with open(p_file, "r", encoding="utf-8") as f:
+                                data = json.load(f)
+                                if preset_name in data:
+                                    raw_template = data[preset_name].get("raw_template")
+                                    break
+                except Exception:
+                    pass
 
-                cmd_args = raw_template.replace("{BIN}", bin_slash).replace("{LISTS}", lists_slash)
-                cmd_args = cmd_args.replace("{GAME_TCP}", str(game_tcp if game_mode else 12))
-                cmd_args = cmd_args.replace("{GAME_UDP}", str(game_udp if game_mode else 12))
+            if not raw_template:
+                raise ValueError(f"Шаблон для пресета '{preset_name}' не найден.")
 
-                full_cmd = f'"{self.winws_path}" {cmd_args}'
-                subprocess.Popen(
-                    full_cmd,
-                    cwd=self.bin_dir,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                    shell=False
-                )
+            self._emit_log(f"Запуск обхода Discord: {preset_name}")
 
-            # Wait up to 3.5 seconds for winws to become active
+            bin_slash = os.path.abspath(self.bin_dir) + "\\"
+            lists_slash = os.path.abspath(self.lists_dir) + "\\"
+
+            cmd_args = raw_template.replace("{BIN}", bin_slash).replace("{LISTS}", lists_slash)
+            cmd_args = cmd_args.replace("{GAME_TCP}", str(game_tcp if game_mode else 12))
+            cmd_args = cmd_args.replace("{GAME_UDP}", str(game_udp if game_mode else 12))
+
+            full_cmd = f'"{self.winws_path}" {cmd_args}'
+
+            # Launch winws directly as background process without batch/cmd bloat
+            self.current_process = subprocess.Popen(
+                full_cmd,
+                cwd=self.bin_dir,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                shell=False
+            )
+
+            # Wait up to 3.0 seconds for winws to become active
             pid = None
-            for _ in range(18):
+            for _ in range(15):
                 time.sleep(0.2)
                 pid = self.get_winws_pid()
                 if pid:

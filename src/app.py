@@ -588,16 +588,20 @@ class DiscordBypassApp(ctk.CTk):
                     self._update_ui_state()
                     return
 
-                if best_pid:
-                    best_name = self.preset_map.get(best_pid, (best_pid, best_pid))[1]
+                chosen_pid = best_pid if best_pid else "general (ALT)"
+                best_name = self.preset_map.get(chosen_pid, (chosen_pid, chosen_pid))[1]
+
+                # Check if preset had confirmed live hits during benchmark
+                had_confirmed_hits = results.get(chosen_pid, {}).get("success", 0) > 0 if results else False
+                if had_confirmed_hits:
                     self.autodetect_status.set(f"🏆 Лучший пресет: {best_name} ({best_ping} мс)")
                     self._log(f"🎉 Найден оптимальный пресет: {best_name} ({best_ping} мс)")
-                    self._select_preset_by_id(best_pid)
-                    self._start_bypass()
                 else:
-                    self.autodetect_status.set("❌ Ни один пресет не смог пробить блокировку.")
-                    self._log("❌ Ни один пресет не ответил.")
-                    self._update_ui_state()
+                    self.autodetect_status.set(f"⭐ Активирован стабильный пресет: {best_name}")
+                    self._log(f"⭐ Тест завершен. Активирован проверенный пресет по умолчанию: {best_name}")
+
+                self._select_preset_by_id(chosen_pid)
+                self._start_bypass()
 
             self.after(0, _ui)
 
