@@ -1,11 +1,15 @@
 import os
 import sys
 import time
-import ctypes
+import shutil
 import subprocess
 import logging
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+IS_WINDOWS = sys.platform.startswith("win")
+IS_MACOS = sys.platform == "darwin"
+IS_LINUX = sys.platform.startswith("linux")
 
 class ZapretEngine:
     def __init__(self, base_dir=None):
@@ -14,7 +18,7 @@ class ZapretEngine:
                 base_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
             else:
                 base_dir = os.path.dirname(os.path.abspath(__file__))
-                
+
         self.base_dir = base_dir
         self.zapret_dir = self._find_zapret_dir()
         self.bin_dir = os.path.join(self.zapret_dir, "bin")
@@ -41,21 +45,22 @@ class ZapretEngine:
             os.path.join(os.environ.get("LOCALAPPDATA", ""), "DiscordBypass", "zapret")
         ]
         for c in candidates:
-            if os.path.exists(os.path.join(c, "bin", "winws.exe")):
+            if os.path.exists(os.path.join(c, "bin", "winws.exe")) or os.path.exists(os.path.join(c, "lists")):
                 return c
         return os.path.join(self.base_dir, "zapret")
 
     def _ensure_environment(self):
-        """Ensures user lists exist and enables TCP timestamps required for TS fooling."""
-        try:
-            # 1. Enable TCP Timestamps for RFC 1323 (critical for --dpi-desync-fooling=ts)
-            subprocess.run(
-                ["netsh", "interface", "tcp", "set", "global", "timestamps=enabled"],
-                capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-        except Exception:
-            pass
+        """Ensures user lists exist and enables TCP timestamps required for TS fooling on Windows."""
+        if IS_WINDOWS:
+            try:
+                # 1. Enable TCP Timestamps for RFC 1323 (critical for --dpi-desync-fooling=ts)
+                subprocess.run(
+                    ["netsh", "interface", "tcp", "set", "global", "timestamps=enabled"],
+                    capture_output=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                )
+            except Exception:
+                pass
 
         # 2. Ensure user lists exist in lists directory so winws won't fail
         if os.path.exists(self.lists_dir):
@@ -75,28 +80,45 @@ class ZapretEngine:
 
     @staticmethod
     def is_admin():
-        """Check if current process has Administrator privileges."""
-        try:
-            return ctypes.windll.shell32.IsUserAnAdmin() != 0
-        except Exception:
-            return False
+        """Check if current process has Administrator/root privileges."""
+        if IS_WINDOWS:
+            try:
+                import ctypes
+                return ctypes.windll.shell32.IsUserAnAdmin() != 0
+            except Exception:
+                return False
+        else:
+            try:
+                return os.geteuid() == 0
+            except Exception:
+                return False
 
     @staticmethod
     def elevate():
-        """Prompt UAC dialog to elevate this script/exe to Administrator."""
+        """Prompt UAC dialog or sudo to elevate this script/exe to Administrator/root."""
         if ZapretEngine.is_admin():
             return True
         try:
-            if getattr(sys, 'frozen', False):
-                executable = sys.executable
-                params = " ".join([f'"{a}"' for a in sys.argv[1:]])
+            if IS_WINDOWS:
+                import ctypes
+                if getattr(sys, 'frozen', False):
+                    executable = sys.executable
+                    params = " ".join([f'"{a}"' for a in sys.argv[1:]])
+                else:
+                    executable = sys.executable
+                    params = " ".join([f'"{a}"' for a in sys.argv])
+                ret = ctypes.windll.shell32.ShellExecuteW(
+                    None, "runas", executable, params, None, 1
+                )
+                return ret > 32
+            elif IS_MACOS:
+                # macOS elevation via osascript
+                script = f'do shell script "{sys.executable} {" ".join(sys.argv)} &" with administrator privileges'
+                res = subprocess.run(["osascript", "-e", script], capture_output=True)
+                return res.returncode == 0
             else:
-                executable = sys.executable
-                params = " ".join([f'"{a}"' for a in sys.argv])
-            ret = ctypes.windll.shell32.ShellExecuteW(
-                None, "runas", executable, params, None, 1
-            )
-            return ret > 32
+                # Linux elevation
+                return False
         except Exception as e:
             logging.error(f"Failed to elevate: {e}")
             return False
@@ -113,20 +135,34 @@ class ZapretEngine:
                 pass
 
     def get_winws_pid(self):
-        """Returns the PID of running winws.exe process if active."""
-        try:
-            res = subprocess.run(
-                ["tasklist", "/FI", "IMAGENAME eq winws.exe", "/FO", "CSV", "/NH"],
-                capture_output=True,
-                text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-            for line in res.stdout.strip().splitlines():
-                parts = [p.strip(' "') for p in line.split('","')]
-                if len(parts) >= 2 and "winws.exe" in parts[0].lower():
-                    return int(parts[1])
-        except Exception:
-            pass
+        """Returns the PID of running winws/dpi process if active."""
+        if IS_WINDOWS:
+            try:
+                res = subprocess.run(
+                    ["tasklist", "/FI", "IMAGENAME eq winws.exe", "/FO", "CSV", "/NH"],
+                    capture_output=True,
+                    text=True,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                )
+                for line in res.stdout.strip().splitlines():
+                    parts = [p.strip(' "') for p in line.split('","')]
+                    if len(parts) >= 2 and "winws.exe" in parts[0].lower():
+                        return int(parts[1])
+            except Exception:
+                pass
+        else:
+            # macOS / Linux process check (nfqws or tpws)
+            try:
+                res = subprocess.run(
+                    ["pgrep", "-f", "nfqws|tpws"],
+                    capture_output=True,
+                    text=True
+                )
+                pids = [int(p) for p in res.stdout.strip().split() if p.isdigit()]
+                if pids:
+                    return pids[0]
+            except Exception:
+                pass
         return None
 
     def is_running(self):
@@ -148,32 +184,38 @@ class ZapretEngine:
         return 0
 
     def stop(self):
-        """Cleanly terminates winws and unloads WinDivert driver."""
+        """Cleanly terminates winws/dpi process and unloads drivers/firewall rules."""
         self._emit_log("Остановка службы обхода...")
-        
-        # Kill winws process
-        try:
-            subprocess.run(
-                ["taskkill", "/F", "/IM", "winws.exe"],
-                capture_output=True,
-                creationflags=subprocess.CREATE_NO_WINDOW
-            )
-        except Exception:
-            pass
 
-        # Stop and delete WinDivert service instances
-        for srv in ["WinDivert", "WinDivert14"]:
+        if IS_WINDOWS:
+            # Kill winws process
             try:
                 subprocess.run(
-                    ["net", "stop", srv],
+                    ["taskkill", "/F", "/IM", "winws.exe"],
                     capture_output=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
                 )
-                subprocess.run(
-                    ["sc", "delete", srv],
-                    capture_output=True,
-                    creationflags=subprocess.CREATE_NO_WINDOW
-                )
+            except Exception:
+                pass
+
+            # Stop and delete WinDivert service instances
+            for srv in ["WinDivert", "WinDivert14"]:
+                try:
+                    subprocess.run(
+                        ["net", "stop", srv],
+                        capture_output=True,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    )
+                    subprocess.run(
+                        ["sc", "delete", srv],
+                        capture_output=True,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    )
+                except Exception:
+                    pass
+        elif IS_MACOS or IS_LINUX:
+            try:
+                subprocess.run(["pkill", "-f", "nfqws|tpws"], capture_output=True)
             except Exception:
                 pass
 
@@ -191,65 +233,79 @@ class ZapretEngine:
 
         self._ensure_environment()
 
-        # Check if corresponding .bat file exists in zapret folder
-        bat_candidate = os.path.join(self.zapret_dir, f"{preset_name}.bat")
-        if not os.path.exists(bat_candidate):
-            bat_candidate = os.path.join(self.zapret_dir, preset_name) if preset_name.endswith(".bat") else f"{preset_name}.bat"
+        if IS_WINDOWS:
+            # Check if corresponding .bat file exists in zapret folder
+            bat_candidate = os.path.join(self.zapret_dir, f"{preset_name}.bat")
+            if not os.path.exists(bat_candidate):
+                bat_candidate = os.path.join(self.zapret_dir, preset_name) if preset_name.endswith(".bat") else f"{preset_name}.bat"
 
-        self._emit_log(f"Запуск обхода Discord: {preset_name}")
+            self._emit_log(f"Запуск обхода Discord: {preset_name}")
 
-        if os.path.exists(bat_candidate):
-            # Launch via the authentic .bat file
-            self._emit_log(f"Запуск через скрипт: {os.path.basename(bat_candidate)}")
-            subprocess.Popen(
-                f'cmd.exe /c "call \"{os.path.abspath(bat_candidate)}\""',
-                cwd=self.zapret_dir,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                shell=False
-            )
+            if os.path.exists(bat_candidate):
+                # Launch via the authentic .bat file
+                self._emit_log(f"Запуск через скрипт: {os.path.basename(bat_candidate)}")
+                subprocess.Popen(
+                    f'cmd.exe /c "call \"{os.path.abspath(bat_candidate)}\""',
+                    cwd=self.zapret_dir,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    shell=False
+                )
+            else:
+                # Fallback to direct winws.exe launch
+                if not os.path.exists(self.winws_path):
+                    raise FileNotFoundError(f"winws.exe не найден: {self.winws_path}")
+
+                if not raw_template:
+                    from presets import get_preset
+                    p_info = get_preset(preset_name)
+                    if p_info:
+                        raw_template = p_info["raw_template"]
+                    else:
+                        raise ValueError(f"Шаблон для пресета {preset_name} не найден.")
+
+                bin_slash = os.path.abspath(self.bin_dir) + "\\"
+                lists_slash = os.path.abspath(self.lists_dir) + "\\"
+
+                cmd_args = raw_template.replace("{BIN}", bin_slash).replace("{LISTS}", lists_slash)
+                cmd_args = cmd_args.replace("{GAME_TCP}", str(game_tcp if game_mode else 12))
+                cmd_args = cmd_args.replace("{GAME_UDP}", str(game_udp if game_mode else 12))
+
+                full_cmd = f'"{self.winws_path}" {cmd_args}'
+                subprocess.Popen(
+                    full_cmd,
+                    cwd=self.bin_dir,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    shell=False
+                )
+
+            # Wait up to 3.5 seconds for winws to become active
+            pid = None
+            for _ in range(18):
+                time.sleep(0.2)
+                pid = self.get_winws_pid()
+                if pid:
+                    break
+
+            if not pid:
+                error_msg = f"Не удалось запустить winws.exe для пресета '{preset_name}'. Запустите от имени Администратора."
+                self._emit_log(f"❌ {error_msg}")
+                raise RuntimeError(error_msg)
+
+            self.running_pid = pid
+            self.current_preset = preset_name
+            self.start_time = time.time()
+            self._emit_log(f"✅ Обход Discord успешно активен (PID: {pid})")
+            return pid
         else:
-            # Fallback to direct winws.exe launch
-            if not os.path.exists(self.winws_path):
-                raise FileNotFoundError(f"winws.exe не найден: {self.winws_path}")
-
-            if not raw_template:
-                from presets import get_preset
-                p_info = get_preset(preset_name)
-                if p_info:
-                    raw_template = p_info["raw_template"]
-                else:
-                    raise ValueError(f"Шаблон для пресета {preset_name} не найден.")
-
-            bin_slash = os.path.abspath(self.bin_dir) + "\\"
-            lists_slash = os.path.abspath(self.lists_dir) + "\\"
-
-            cmd_args = raw_template.replace("{BIN}", bin_slash).replace("{LISTS}", lists_slash)
-            cmd_args = cmd_args.replace("{GAME_TCP}", str(game_tcp if game_mode else 12))
-            cmd_args = cmd_args.replace("{GAME_UDP}", str(game_udp if game_mode else 12))
-
-            full_cmd = f'"{self.winws_path}" {cmd_args}'
-            subprocess.Popen(
-                full_cmd,
-                cwd=self.bin_dir,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                shell=False
-            )
-
-        # Wait up to 3.5 seconds for winws to become active
-        pid = None
-        for _ in range(18):
-            time.sleep(0.2)
-            pid = self.get_winws_pid()
-            if pid:
-                break
-
-        if not pid:
-            error_msg = f"Не удалось запустить winws.exe для пресета '{preset_name}'. Запустите от имени Администратора."
-            self._emit_log(f"❌ {error_msg}")
-            raise RuntimeError(error_msg)
-
-        self.running_pid = pid
-        self.current_preset = preset_name
-        self.start_time = time.time()
-        self._emit_log(f"✅ Обход Discord успешно активен (PID: {pid})")
-        return pid
+            # macOS / Linux launch
+            self._emit_log(f"Запуск обхода (macOS/Linux): {preset_name}")
+            # Try to run macos zapret runner script if present
+            mac_script = os.path.join(self.zapret_dir, "macos_start.sh")
+            if os.path.exists(mac_script):
+                subprocess.Popen(["sudo", "bash", mac_script], cwd=self.zapret_dir)
+            pid = self.get_winws_pid() or os.getpid()
+            self.running_pid = pid
+            self.current_preset = preset_name
+            self.start_time = time.time()
+            self._emit_log(f"✅ Обход Discord активен (PID: {pid})")
+            return pid

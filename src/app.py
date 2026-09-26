@@ -32,18 +32,19 @@ class DiscordBypassApp(ctk.CTk):
             self.app_dir = os.path.dirname(os.path.abspath(__file__))
 
         # Set Icon if exists
-        ico_candidates = [
-            os.path.join(self.app_dir, "icon.ico"),
-            os.path.join(os.path.dirname(self.app_dir), "icon.ico"),
-            os.path.join(self.app_dir, "src", "icon.ico"),
-        ]
-        for ico_path in ico_candidates:
-            if os.path.exists(ico_path):
-                try:
-                    self.iconbitmap(ico_path)
-                    break
-                except Exception:
-                    pass
+        if sys.platform.startswith("win"):
+            ico_candidates = [
+                os.path.join(self.app_dir, "icon.ico"),
+                os.path.join(os.path.dirname(self.app_dir), "icon.ico"),
+                os.path.join(self.app_dir, "src", "icon.ico"),
+            ]
+            for ico_path in ico_candidates:
+                if os.path.exists(ico_path):
+                    try:
+                        self.iconbitmap(ico_path)
+                        break
+                    except Exception:
+                        pass
 
         # Backend Engine and AutoDetector
         self.engine = ZapretEngine(base_dir=self.app_dir)

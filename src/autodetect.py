@@ -22,14 +22,16 @@ class AutoDetector:
         self._cancel_event.set()
 
     def _test_endpoint_curl(self, url, timeout_sec=3):
-        """Uses Windows native curl.exe with DoH fallback to test TLS and HTTP connection through WinDivert."""
+        """Uses system curl with fallback to test TLS and HTTP connection through DPI bypass."""
+        null_out = "NUL" if sys.platform.startswith("win") else "/dev/null"
+        curl_bin = "curl.exe" if sys.platform.startswith("win") else "curl"
         cmd = [
-            "curl.exe",
+            curl_bin,
             "-I",
             "-s",
             "-m", str(timeout_sec),
             "--connect-timeout", "2",
-            "-o", "NUL",
+            "-o", null_out,
             "-w", "%{http_code}|%{time_total}",
             url
         ]
@@ -39,7 +41,7 @@ class AutoDetector:
                 capture_output=True,
                 text=True,
                 timeout=timeout_sec + 1,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)
             )
             out = res.stdout.strip()
             if "|" in out:
