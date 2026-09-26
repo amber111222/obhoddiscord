@@ -60,7 +60,7 @@ class DiscordBypassApp(ctk.CTk):
         self.pid_var = ctk.StringVar(value="—")
         self.preset_label_var = ctk.StringVar(value="general (ALT)")
         self.ping_status_var = ctk.StringVar(value="— мс")
-        self.autodetect_status = ctk.StringVar(value="Нажмите «Начать тест пресетов» для автоподбора лучшего обхода")
+        self.autodetect_status = ctk.StringVar(value="Автоподбор сервера и лучшего обхода запускается...")
 
         # Switches
         self.quick_test_var = ctk.BooleanVar(value=True) # True = top 6, False = top 14
@@ -80,9 +80,9 @@ class DiscordBypassApp(ctk.CTk):
         # Protocol for clean window closing
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # Auto-start bypass immediately on app launch if running as admin
+        # Auto-start server autodetection immediately on app launch if running as admin
         if self.engine.is_admin():
-            self.after(350, self._start_bypass)
+            self.after(400, self._on_start_autodetect)
 
     def _check_admin_rights(self):
         if not self.engine.is_admin():
