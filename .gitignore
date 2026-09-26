@@ -1,0 +1,16 @@
+# Python & Build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.spec
+build/
+dist/
+
+# Logs
+*.log
+
+# Temp files
+*.tmp
+*.bak
+*.backup
+*.test-backup.txt
