@@ -1,7 +1,7 @@
 <div align="center">
 
-# 🛡️ Discord Bypass Pro (Zapret Edition)
-### Высокоскоростной обход блокировки Discord для Windows 10/11, Windows 7/8.1 и macOS
+# 🛡️ Обход Дискорд / Discord Bypass Pro [Zapret • Голос • Чат • RTC • РКН]
+### Лучший инструмент для обхода блокировки Discord в России (Windows 10/11, 7/8 и macOS)
 
 [![Latest Release](https://img.shields.io/github/v/release/amber111222/obhoddiscord?color=23A55A&label=Релиз%20v1.0&style=for-the-badge)](https://github.com/amber111222/obhoddiscord/releases/latest)
 [![OS Support](https://img.shields.io/badge/ОС-Windows%2010%2F11%20%7C%20macOS-5865F2?style=for-the-badge)](https://github.com/amber111222/obhoddiscord)

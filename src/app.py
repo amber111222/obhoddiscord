@@ -19,7 +19,7 @@ class DiscordBypassApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("Discord Bypass Pro — Zapret Edition")
+        self.title("Обход Дискорд Pro [Discord Bypass] — Zapret, Голос, Чат, RTC")
         
         # Exact 16:9 Widescreen aspect ratio (1152x648)
         self.geometry("1152x648")
@@ -124,7 +124,7 @@ class DiscordBypassApp(ctk.CTk):
 
         title_lbl = ctk.CTkLabel(
             header_left,
-            text="🛡️ DISCORD BYPASS PRO",
+            text="🛡️ ОБХОД ДИСКОРД PRO [DISCORD BYPASS]",
             font=ctk.CTkFont(size=20, weight="bold"),
             text_color="#FFFFFF"
         )
@@ -132,7 +132,7 @@ class DiscordBypassApp(ctk.CTk):
 
         subtitle_lbl = ctk.CTkLabel(
             header_left,
-            text="Высокоскоростной обход блокировок Discord (Голос, Видео, Стримы, Чат) • Zapret Core v1.10.3",
+            text="Обход блокировки Discord (Голос, Чат, Стримы, RTC, РКН) • Zapret Core v1.10.3 • Windows & macOS",
             font=ctk.CTkFont(size=12),
             text_color="#949BA4"
         )
